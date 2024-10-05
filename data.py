@@ -1,10 +1,8 @@
 from lightning.pytorch import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
-from typing import Dict, List, Generator
+from typing import Dict, List, Generator, Tuple
 from torch.utils.data import Dataset
-from torch.fft import fftn
 from torch import Tensor
-import os.path as osp
 import pandas as pd
 import torch
 import os
@@ -33,7 +31,8 @@ def recursive_search(parent: str) -> Generator[str, None, None]:
 class TestDataset(Dataset):
     def __init__(self) -> None:
         super().__init__()
-        self.filepaths = [filename for filename in recursive_search('./data/mars/')] + [filename for filename in recursive_search('./data/lunar/')]
+        self.filepaths = [filename for filename in recursive_search('./data/mars/test')] + \
+                        [filename for filename in recursive_search('./data/lunar/test')]
         self.dataset = torch.from_numpy(pd.concat(
             [
                 pd.DataFrame(filepath) for filepath in self.filepaths
@@ -48,46 +47,53 @@ class TestDataset(Dataset):
 
 class TrainDataset(Dataset):
     def __init__(self) -> None:
-        self.meta_lunar: pd.DataFrame = pd.read_csv(metadata['lunar']['catalog']),
-        self.meta_mars: pd.DataFrame = pd.read_csv(metadata['mars']['catalog'])
-        self.metadata: List[str] = list(pd.concat(
+        self.filepaths = [filename for filename in recursive_search('./data/mars/training')] + \
+                        [filename for filename in recursive_search('./data/lunar/training')]
+        self.meta_lunar: pd.DataFrame = pd.read_csv(metadata['lunar']['catalog'], index_col = ['filename']),
+        self.meta_mars: pd.DataFrame = pd.read_csv(metadata['mars']['catalog'], index_col = ['filename'])
+        self.metadata: pd.DataFrame = pd.concat(
             [
-                self.meta_lunar['filename'],
-                self.meta_mars['filename']
-            ],
-            axis = 0
-        ).values)
-
-        self.data: Dict[str, Tensor] = {
-            filename: self.preprocess_csv(filename, 'lunar') for filename in self.meta_lunar['filename'].values
-        }.update(
-            {
-                filename: self.preprocess_csv(f'{filename}.csv', 'mars') for filename in self.meta_mars['filename'].values
-            }
+                self.meta_lunar,
+                self.meta_mars,
+            ], axis = 0
         )
+
+    def preprocessing(self) -> None:
+        self.dataset: List[Tuple[Tensor, Tensor]] = []
+        for file in self.filepaths:
+            try:
+                arrive = self.metadata.loc[['time_rel(sec)'], file]
+                target: Tensor = self.get_target(arrive)
+                input: Tensor = self.get_input(file)
+                self.dataset.append((input, target))
+            except IndexError:
+                continue
 
     def __len__(self) -> int:
         return len(self.metadata)
 
-    def preprocess_csv(self, name: str, type_: str) -> Tensor:
-        path: str = osp.join(metadata[type_]['catalog'], name)
-        df: pd.DataFrame = pd.read_csv(path)
-        ## add more preprocessing steps
-        out: Tensor = torch.from_numpy(df.values)
+    def get_input(self, file: str) -> Tensor:
+        df: pd.DataFrame = pd.read_csv(file, parse_dates =['time_abs(%Y-%m-%dT%H:%M:%S.%f)'] ,index_col = ['time_abs(%Y-%m-%dT%H:%M:%S.%f)'])
+        velocity: Tensor = torch.from_numpy(torch.from_numpy(df.resample('s').mean().values))
+        max: Tensor = torch.from_numpy(df.resample('s').max().values)
+        min: Tensor = torch.from_numpy(df.resample('s').min().values)
         ### add the wavelet / fourier transform is needed
-        return out
+        return torch.stack(
+            [
+                velocity, max, min
+            ], dim = -1
+        )
 
-    def __getitem__(self, idx: int) -> Tensor:
+    def __getitem__(self, idx: int) -> Tuple[Tensor, Tensor]:
         filename: str = self.metadata[idx]
         return self.data[filename]
 
 class DataModule(LightningDataModule):
-    def __init__(self, batch_size: int, num_workers: int, pin_memory: bool, train_pt: float) -> None:
+    def __init__(self, batch_size: int, num_workers: int, pin_memory: bool) -> None:
         super().__init__()
         self.batch_size: int = batch_size
         self.num_workers: int = num_workers
         self.pin_memory: bool = pin_memory
-        self.train_pt: float = train_pt
 
     def setup(self, stage: str) -> None:
         self.train_ds = TrainDataset()

@@ -1,8 +1,6 @@
-from typing import Sequence
 from lightorch.nn.sequential.residual import GRU
 from lightorch.training.supervised import Module
-from torch import nn, Tensor
-from torch.nn.modules import Sequential
+from torch import Tensor
 from .loss import criterion
 
 
