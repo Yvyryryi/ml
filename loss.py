@@ -11,7 +11,7 @@ class TV(LighTorchLoss):
         )
 
     def forward(self, **kwargs) -> Tensor:
-        return torch.norm(kwargs['input'][:, :-1] - kwargs['input'][:, 1:], p=1).sum()
+        return torch.norm(kwargs['reconstruction'][:, :-1] - kwargs['reconstruction'][:, 1:], p=1).sum()
 
 class BinaryCrossEntropy(LighTorchLoss):
     def __init__(self, factor: float = 1) -> None:
@@ -20,7 +20,7 @@ class BinaryCrossEntropy(LighTorchLoss):
             factors={self.__class__.__name__: factor},
         )
     def forward(self, **kwargs) -> Tensor:
-        return f.binary_cross_entropy(kwargs['input'], kwargs['target'])
+        return f.binary_cross_entropy(kwargs['binary_pred'], kwargs['binary_target'])
 
 class SeismicVelocityLoss(LighTorchLoss):
     def __init__(self, omega: float, damping: float, factor: float = 1) -> None:

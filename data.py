@@ -1,5 +1,5 @@
 from lightning.pytorch import LightningDataModule
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 from sklearn.preprocessing import StandardScaler
 from typing import Dict, List, Generator, Tuple
 from scipy.signal import butter, filtfilt
@@ -63,7 +63,7 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
     y = filtfilt(b, a, data)
     return y
 
-def filter_p_s_waves(velocity: np.ndarray,
+def get_fourier(velocity: np.ndarray,
                      sampling_rate: int = 512,
                      nperseg: int = 60) -> torch.Tensor:
     frequencies, _, Zxx = stft(velocity, fs=sampling_rate, nperseg=nperseg)
@@ -101,6 +101,12 @@ class Base(Dataset):
         pad_size = self.sequence_length - x.size(-1)
         if pad_size > 0:
             return torch.nn.functional.pad(x, (0, pad_size))
+        return x
+
+    def one_padding(self, x: Tensor) -> Tensor:
+        pad_size = self.sequence_length - x.size(-1)
+        if pad_size > 0:
+            return torch.nn.functional.pad(x, (0, pad_size), "constant", 1)
         return x
 
     def preprocessing(self) -> None:
@@ -141,6 +147,7 @@ class TrainDataset(Base):
 
         out: Tensor = torch.stack(
             [
+                times,
                 velocities,
                 acceleration,
                 max_velocities,
@@ -150,8 +157,8 @@ class TrainDataset(Base):
         )
 
         return [
-            (self.zero_padding(input), self.zero_padding(output)) \
-            for input, output in zip(out.split(self.sequence_length), target.split(self.sequence_length))
+            (self.one_padding(time), self.zero_padding(input), self.zero_padding(output)) \
+            for input, output, time in zip(out.split(self.sequence_length), target.split(self.sequence_length), times.split(self.sequence_length))
         ]
 
 class TestDataset(Base):
@@ -181,7 +188,7 @@ class TestDataset(Base):
         )
 
         return [
-            self.zero_padding(input) for input in zip(out.split(self.sequence_length))
+            (self.one_padding(time), self.zero_padding(input)) for input, time in zip(out.split(self.sequence_length), times.split(self.sequence_length))
         ]
 
 class DataModule(LightningDataModule):
@@ -192,11 +199,14 @@ class DataModule(LightningDataModule):
         self.pin_memory: bool = pin_memory
 
     def setup(self, stage: str) -> None:
-        self.train_ds = TrainDataset(30, timedelta(minutes = 1))
-        self.test_ds = TestDataset(30, timedelta(minutes = 1))
+        dataset = TrainDataset(200, timedelta(minutes = 1))
+        train_len = round(0.8*len(dataset))
+        val_len = len(dataset) - train_len
+        self.train_ds, self.val_ds = random_split(dataset, [train_len, val_len])
+        self.test_ds = TestDataset(200, timedelta(minutes = 1))
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(self.train_ds, batch_size=self.batch_size, pin_memory=self.pin_memory, num_workers=self.num_workers)
 
-    def val_dataloader(self) -> DataLoader:
+    def test_dataloader(self) -> DataLoader:
         return DataLoader(self.test_ds, batch_size=self.batch_size, pin_memory=self.pin_memory, num_workers=self.num_workers)

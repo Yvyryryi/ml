@@ -2,7 +2,7 @@ from lightorch.training.supervised import Module
 from typing import Sequence, Dict, Any, Tuple
 from torch import nn, Tensor
 import torch
-from ..loss import criterion
+from loss import criterion
 
 def conv_block(
     in_channels: int,
@@ -57,9 +57,9 @@ class Encoder(nn.Module):
         self.fc_mu = nn.Linear(channels[-1], latent_dim)
         self.fc_logvar = nn.Linear(channels[-1], latent_dim)
 
-    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         x = self.conv_layers(x)
-        x = x.view(x.size(0), -1)
+        x = x.view(x.size(0), -1)  # Flatten before feeding to fully connected layers
         mu = self.fc_mu(x)
         logvar = self.fc_logvar(x)
         return mu, logvar
@@ -87,7 +87,7 @@ class Decoder(nn.Module):
 
     def forward(self, z: Tensor) -> Tensor:
         x = self.fc(z)
-        x = x.unsqueeze(2)
+        x = x.unsqueeze(2)  # Add a dummy dimension for 1D convolution
         x = self.conv_layers(x)
         x = self.final_conv(x)
         return x
@@ -105,21 +105,34 @@ class VAE(nn.Module):
         latent_dim: int
     ) -> None:
         super().__init__()
-        self.encoder = Encoder(input_channels, encoder_channels, kernel_sizes, strides, paddings, dropout,  'Tanh', latent_dim)
-        self.decoder = Decoder(latent_dim, decoder_channels, kernel_sizes[::-1], strides[::-1], paddings[::-1], dropout, 'Tanh', 1)
+        self.encoder = Encoder(input_channels, encoder_channels, kernel_sizes, strides, paddings, dropout, nn.Tanh, latent_dim)
+        self.decoder = Decoder(latent_dim, decoder_channels, kernel_sizes[::-1], strides[::-1], paddings[::-1], dropout, nn.Tanh, 1)
+
+        sequence_length: int = 200
+
+        self.binary_classifier = nn.Sequential(
+            nn.Linear(latent_dim, latent_dim * 2),
+            nn.ReLU(),
+            nn.Linear(latent_dim * 2, sequence_length), ## secuence length
+            nn.Sigmoid()
+        )
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    def binary(self, z: Tensor) -> Tensor:
+        return self.binary_classifier(z)
+
+    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         mu, logvar = self.encoder(x)
         z = self.reparameterize(mu, logvar)
+        binary_pred = self.binary(z)
         recon_x = self.decoder(z)
-        return recon_x, mu, logvar
+        return recon_x, binary_pred, mu, logvar
 
-class VAEModel(Module):
+class Model(Module):
     def __init__(self, **hparams: Dict[str, Any]) -> None:
         super().__init__()
         self.vae = VAE(
@@ -134,14 +147,20 @@ class VAEModel(Module):
         )
         self.criterion = criterion(hparams['beta'], *hparams['lambdas'])
 
-    def loss_forward(batch: Tensor, idx: int):
+    def loss_forward(self, batch: Tensor, idx: int):
+        times, input, binary_target = batch
+        reconstruction, binary_pred, mu, logvar = self(batch[0])
+        binary_target = batch[1]
+        return dict(
+            input=reconstruction,
+            target=input,
+            logvar=logvar,
+            mu=mu,
+            velocity=reconstruction[:, :, 0],
+            time=times,
+            binary_pred=binary_pred,
+            binary_target=binary_target,
+        )
 
-        return {
-
-        }
-
-    def forward(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         return self.vae(x)
-
-    def loss_function(self, recon_x: Tensor, x: Tensor, mu: Tensor, logvar: Tensor) -> Tensor:
-        return self.criterion(recon_x, x, mu, logvar)
