@@ -9,14 +9,14 @@ import os
 
 metadata: Dict[str, Dict[str,str]] = dict(
     lunar = dict(
-        catalog = 'data/lunar/training/catalogs/apollo12_catalog_GradeA_final.csv',
-        train_path = 'data/mars/training/data',
-        test_path = 'data/mars/test/data',
+        catalog = '../data/lunar/training/catalogs/apollo12_catalog_GradeA_final.csv',
+        train_path = '../data/mars/training/data',
+        test_path = '../data/mars/test/data',
     ),
     mars = dict(
-        catalog = 'data/mars/training/catalogs/Mars_InSight_training_catalog_final.csv',
-        train_path = 'data/lunar/training/data/S12_GradeA',
-        test_path = 'data/lunar/test/data'
+        catalog = '../data/mars/training/catalogs/Mars_InSight_training_catalog_final.csv',
+        train_path = '../data/lunar/training/data/S12_GradeA',
+        test_path = '../data/lunar/test/data'
     )
 )
 
@@ -31,8 +31,8 @@ def recursive_search(parent: str) -> Generator[str, None, None]:
 class TestDataset(Dataset):
     def __init__(self) -> None:
         super().__init__()
-        self.filepaths = [filename for filename in recursive_search('./data/mars/test')] + \
-                        [filename for filename in recursive_search('./data/lunar/test')]
+        self.filepaths = [filename for filename in recursive_search('../data/mars/test/data')] + \
+                        [filename for filename in recursive_search('../data/lunar/test/data')]
         self.dataset = torch.from_numpy(pd.concat(
             [
                 pd.DataFrame(filepath) for filepath in self.filepaths
@@ -48,9 +48,9 @@ class TestDataset(Dataset):
 class TrainDataset(Dataset):
     def __init__(self, sequence_length: int) -> None:
         self.sequence_length = sequence_length
-        self.filepaths = [filename for filename in recursive_search('./data/mars/training/data')] + \
-                        [filename for filename in recursive_search('./data/lunar/training/data')]
-        self.meta_lunar: pd.DataFrame = pd.read_csv(metadata['lunar']['catalog'], index_col = ['filename']),
+        self.filepaths = [filename for filename in recursive_search('../data/mars/training/data')] + \
+                        [filename for filename in recursive_search('../data/lunar/training/data')]
+        self.meta_lunar: pd.DataFrame = pd.read_csv(metadata['lunar']['catalog'], index_col = ['filename'])
         self.meta_mars: pd.DataFrame = pd.read_csv(metadata['mars']['catalog'], index_col = ['filename'])
         self.metadata: pd.DataFrame = pd.concat(
             [
@@ -58,17 +58,22 @@ class TrainDataset(Dataset):
                 self.meta_mars,
             ], axis = 0
         )
-        self.padding = lambda input: ## padding(input, sequence_length)
 
-    def preprocessing(self) -> None:
-        self.dataset: List[Tuple[Tensor, Tensor]] = []
-        for file in self.filepaths:
-            try:
-                arrive = self.metadata.loc[['time_rel(sec)'], file]
-                out: Tensor = self.get_data(file)
-                self.dataset.extend((input, target)) ### mirar
-            except IndexError:
-                continue
+    def zero_padding(self, x: torch.Tensor, length: int = 60) -> torch.Tensor:
+        pad_size = length - x.size(-2)
+        if pad_size > 0:
+            return torch.nn.functional.pad(x, (0, 0, 0, pad_size))
+        return x
+    
+    # def preprocessing(self) -> None:
+    #     self.dataset: List[Tuple[Tensor, Tensor]] = []
+    #     for file in self.filepaths:
+    #         try:
+    #             arrive = self.metadata.loc[['time_rel(sec)'], file]
+    #             out: Tensor = self.get_data(file)
+    #             self.dataset.extend((input, target)) ### mirar
+    #         except IndexError:
+    #             continue
 
     def __len__(self) -> int:
         return len(self.metadata)
@@ -77,18 +82,18 @@ class TrainDataset(Dataset):
         ## get target (tensor de 0 y 1s tal que el idx del arrival este coincidiendo con el arrival real)
         ## arrival_time = self.metadata[file].iloc['time_rel(sec)']
         ## creas el tensor
-
+        
         df: pd.DataFrame = pd.read_csv(file, parse_dates =['time_abs(%Y-%m-%dT%H:%M:%S.%f)'] ,index_col = ['time_abs(%Y-%m-%dT%H:%M:%S.%f)'])
-        velocity: Tensor = torch.from_numpy(torch.from_numpy(df.resample('s').mean().values))
+        velocity: Tensor = torch.from_numpy(df.resample('s').mean().values)
         max: Tensor = torch.from_numpy(df.resample('s').max().values)
         min: Tensor = torch.from_numpy(df.resample('s').min().values)
         ### add the wavelet / fourier transform is needed
 
         ### separar de a sequence_length
         ### input(sequence_length, input_size) -> target(sequence_length) (0, 0, 1, 0)
-        return self.padding(torch.stack(
+        return self.zero_padding(torch.stack(
             [
-                velocity, accelaration, butter, sfft ## convolution transpuest
+                velocity ## convolution transpuest, aceleración, butter
             ], dim = -1
         ))
 
