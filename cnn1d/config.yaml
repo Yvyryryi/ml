@@ -9,6 +9,7 @@ trainer:
 model:
   class_path: cnn1d.model.Model
   dict_kwargs:
+    # TODO
 
 data:
   class_path: data.DataModule
