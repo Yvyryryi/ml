@@ -1,6 +1,6 @@
 from lightorch.training.supervised import Module
 from lightorch.nn.sequential.residual import LSTM
-from torch import nn, Tensor
+from torch import Tensor
 from ..loss import criterion
 
 class SignalProcessingLSTM(LSTM):
@@ -10,8 +10,17 @@ class SignalProcessingLSTM(LSTM):
 class Model(Module):
     def __init__(self, **hparams) -> None:
         super().__init__(**hparams)
-        self.model = SignalProcessingLSTM()
-        self.criterion = criterion()
+        self.model = SignalProcessingLSTM(
+            hparams['input_size'],
+            hparams['hidden_size'],
+            hparams['lstm_layers'],
+            hparams['res_layers'],
+            True,
+            True,
+            hparams['dropout'],
+            hparams['bidirectional'],
+        )
+        self.criterion = criterion(hparams['beta'], *hparams['lambdas'])
 
     def forward(self, x: Tensor) -> Tensor:
         return self.model(x)

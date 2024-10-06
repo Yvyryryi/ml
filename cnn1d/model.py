@@ -1,5 +1,6 @@
 from lightorch.training.supervised import Module
 from typing import Sequence
+
 from torch import nn, Tensor
 from ..loss import criterion
 
@@ -57,8 +58,10 @@ class SignalProcessing1DCNN(nn.Sequential):
 class Model(Module):
     def __init__(self, **hparams) -> None:
         super().__init__(**hparams)
-        self.model = SignalProcessing1DCNN()
-        self.criterion = criterion()
+        self.model = SignalProcessing1DCNN(
+
+        )
+        self.criterion = criterion(hparams['beta'], *hparams['lambdas'])
 
     def forward(self, x: Tensor) -> Tensor:
         return self.model(x)

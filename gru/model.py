@@ -1,7 +1,7 @@
 from lightorch.nn.sequential.residual import GRU
 from lightorch.training.supervised import Module
+from ..loss import criterion
 from torch import Tensor
-from .loss import criterion
 
 
 class SignalProcessingGRU(GRU):
@@ -11,8 +11,17 @@ class SignalProcessingGRU(GRU):
 class Model(Module):
     def __init__(self, **hparams) -> None:
         super().__init__(**hparams)
-        self.model = SignalProcessingGRU()
-        self.criterion = criterion()
+        self.model = SignalProcessingGRU(
+            hparams['input_size'],
+            hparams['hidden_size'],
+            hparams['gru_layers'],
+            hparams['res_layers'],
+            True,
+            True,
+            hparams['dropout'],
+            hparams['bidirectional'],
+        )
+        self.criterion = criterion(hparams['beta'], *hparams['lambdas'])
 
     def forward(self, x: Tensor) -> Tensor:
         return self.model(x)
