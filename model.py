@@ -1,8 +1,8 @@
 from lightorch.training.supervised import Module
 from typing import Sequence, Dict, Any, Tuple
 from torch import nn, Tensor
-import torch
 from loss import criterion
+import torch
 
 def conv_block(
     in_channels: int,
@@ -59,7 +59,7 @@ class Encoder(nn.Module):
 
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         x = self.conv_layers(x)
-        x = x.view(x.size(0), -1)  # Flatten before feeding to fully connected layers
+        x = x.view(x.size(0), -1)
         mu = self.fc_mu(x)
         logvar = self.fc_logvar(x)
         return mu, logvar
@@ -134,7 +134,7 @@ class VAE(nn.Module):
 
 class Model(Module):
     def __init__(self, **hparams: Dict[str, Any]) -> None:
-        super().__init__()
+        super().__init__(**hparams)
         self.vae = VAE(
             input_channels=hparams['input_channels'],
             encoder_channels=hparams['encoder_channels'],

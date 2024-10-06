@@ -34,22 +34,18 @@ def recursive_search(parent: str) -> Generator[str, None, None]:
         elif child.endswith('.csv'):
             yield child_path
 
-def mars_prep(filepaths: List[str]) -> List[pd.DataFrame]:
-    out = []
-    for filepath in filepaths:
-        df = pd.read_csv(filepath, parse_dates = ['time(%Y-%m-%dT%H:%M:%S.%f)'], index_col =['time(%Y-%m-%dT%H:%M:%S.%f)'])
-        df['norm_v'] = StandardScaler().fit_transform(df['velocity(c/s)'].values.reshape(-1, 1))
-        df.columns = ['time_abs(%Y-%m-%dT%H:%M:%S.%f)','time_rel(sec)','velocity(m/s)', 'norm_v']
-        out.append(df)
-    return out
+def mars_prep(filepath: str) -> pd.DataFrame:
+    df = pd.read_csv(filepath, parse_dates = ['time(%Y-%m-%dT%H:%M:%S.%f)'], index_col =['time(%Y-%m-%dT%H:%M:%S.%f)'])
+    df = df.reset_index()
+    df['norm_v'] = StandardScaler().fit_transform(df['velocity(c/s)'].values.reshape(-1, 1))
+    df.columns = ['time_abs(%Y-%m-%dT%H:%M:%S.%f)','time_rel(sec)','velocity(m/s)', 'norm_v']
+    df = df.set_index('time_abs(%Y-%m-%dT%H:%M:%S.%f)', drop = True)
+    return df
 
-def lunar_prep(filepaths: List[str]) -> List[pd.DataFrame]:
-    out = []
-    for filepath in filepaths:
-        df = pd.read_csv(filepath, parse_dates = ['time_abs(%Y-%m-%dT%H:%M:%S.%f)'], index_col =['time_abs(%Y-%m-%dT%H:%M:%S.%f)'])
-        df['norm_v'] = StandardScaler().fit_transform(df['velocity(m/s)'].values.reshape(-1, 1))
-        out.append(df)
-    return out
+def lunar_prep(filepath: str) -> pd.DataFrame:
+    df = pd.read_csv(filepath, parse_dates = ['time_abs(%Y-%m-%dT%H:%M:%S.%f)'], index_col =['time_abs(%Y-%m-%dT%H:%M:%S.%f)'])
+    df['norm_v'] = StandardScaler().fit_transform(df['velocity(m/s)'].values.reshape(-1, 1))
+    return df
 
 def butter_bandpass(lowcut, highcut, fs, order=4):
     nyquist = 0.5 * fs
@@ -60,7 +56,7 @@ def butter_bandpass(lowcut, highcut, fs, order=4):
 
 def bandpass_filter(data, lowcut, highcut, fs, order=4):
     b, a = butter_bandpass(lowcut, highcut, fs, order=order)
-    y = filtfilt(b, a, data)
+    y = filtfilt(b, a, data).astype(np.float32)
     return y
 
 def get_fourier(velocity: np.ndarray,
@@ -68,24 +64,23 @@ def get_fourier(velocity: np.ndarray,
                      nperseg: int = 60) -> torch.Tensor:
     frequencies, _, Zxx = stft(velocity, fs=sampling_rate, nperseg=nperseg)
     magnitude = torch.tensor(np.abs(Zxx), dtype=torch.float32)
-    p_wave_range = (0.5, 15.0)
-    s_wave_range = (0.1, 8.0)
-    frequency_mask = ((frequencies >= p_wave_range[0]) & (frequencies <= p_wave_range[1])) | \
-                      ((frequencies >= s_wave_range[0]) & (frequencies <= s_wave_range[1]))
+    wave_range = (0.1, 5.0)
+    frequency_mask = (frequencies >= wave_range[0]) & (frequencies <= wave_range[1])
     filtered_magnitude = magnitude[frequency_mask]
-    out = F.interpolate(filtered_magnitude.unsqueeze(0), size=(len(velocity),), mode='linear', align_corners=True)
-    return out.squeeze(0, 1)
+    with torch.no_grad():
+        out = F.interpolate(filtered_magnitude.unsqueeze(0), size=(len(velocity),), mode='linear', align_corners=True)
+        return out.squeeze(0, 1)
 
 class Base(Dataset):
     def __init__(self, sequence_length: int, resample: timedelta, train: bool) -> None:
         self.sequence_length = sequence_length
         self.resample = pd.Timedelta(resample)
         if train:
-            self.filepaths = [filename for filename in recursive_search('../data/lunar/training/data')] + \
-                            [filename for filename in recursive_search('../data/mars/training/data')]
+            self.filepaths = [filename for filename in recursive_search('../data/mars/training/data')] + \
+                            [filename for filename in recursive_search('../data/lunar/training/data')]
         else:
-            self.filepaths = [filename for filename in recursive_search('../data/lunar/test/data')] + \
-                            [filename for filename in recursive_search('../data/mars/test/data')]
+            self.filepaths = [filename for filename in recursive_search('../data/mars/test/data')] + \
+                            [filename for filename in recursive_search('../data/lunar/test/data')]
 
         self.meta_lunar: pd.DataFrame = pd.read_csv(metadata['lunar']['catalog'], index_col = ['filename'])
         self.meta_mars: pd.DataFrame = pd.read_csv(metadata['mars']['catalog'], index_col = ['filename'])
@@ -115,7 +110,7 @@ class Base(Dataset):
             try:
                 out: Tensor = self.get_data(file)
                 self.data.extend(out)
-            except IndexError:
+            except (ValueError, KeyError):
                 continue
 
     def __len__(self) -> int:
@@ -129,8 +124,13 @@ class TrainDataset(Base):
         super().__init__(sequence_length, resample, True)
 
     def get_data(self, file: str) -> List[Tuple[Tensor, Tensor]]: ## atencion
-        df: pd.DataFrame = pd.read_csv(file, parse_dates =['time_abs(%Y-%m-%dT%H:%M:%S.%f)'] ,index_col = ['time_abs(%Y-%m-%dT%H:%M:%S.%f)'])
-        target_idx: int = round(timedelta(seconds=self.metadata["time_rel(sec)"].loc[os.path.basename(file)])/self.resample)
+        if 'mars' in file:
+            df: pd.DataFrame = mars_prep(file)
+        elif 'lunar' in file:
+            df: pd.DataFrame = lunar_prep(file)
+        else:
+            raise ValueError("Not valid file")
+        target_idx: int = round(timedelta(seconds=self.metadata["time_rel(sec)"].loc[str(os.path.basename(file))[:-4]])/self.resample)
         ## vel
         velocities: Tensor = torch.from_numpy(df["norm_v"].resample(self.resample).mean().values)
         times: Tensor = torch.from_numpy(df["time_rel(sec)"].resample(self.resample).mean().values)
@@ -141,13 +141,13 @@ class TrainDataset(Base):
 
         ## vel, acceleration, butterworth, wavelet, fourier
         acceleration: Tensor = (velocities[:-1] - velocities[1:]) / (times[:-1] - times[1:])
+        acceleration = torch.nn.functional.pad(acceleration, (0, 1), "constant", 0)
         max_velocities: Tensor = torch.from_numpy(df["norm_v"].resample(self.resample).max().values)
-        butterworth_bandpass: Tensor = torch.from_numpy(butter_bandpass(max_velocities, 0.1, 0.5, fs = 60))
+        butterworth_bandpass: Tensor = torch.from_numpy(bandpass_filter(max_velocities, 0.1, 0.5, fs = 60))
         sliding_fourier: Tensor = get_fourier(velocities, self.sequence_length)
 
         out: Tensor = torch.stack(
             [
-                times,
                 velocities,
                 acceleration,
                 max_velocities,
@@ -207,6 +207,9 @@ class DataModule(LightningDataModule):
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(self.train_ds, batch_size=self.batch_size, pin_memory=self.pin_memory, num_workers=self.num_workers)
+
+    def val_dataloader(self) -> DataLoader:
+        return DataLoader(self.val_ds, batch_size=self.batch_size, pin_memory=self.pin_memory, num_workers=self.num_workers)
 
     def test_dataloader(self) -> DataLoader:
         return DataLoader(self.test_ds, batch_size=self.batch_size, pin_memory=self.pin_memory, num_workers=self.num_workers)

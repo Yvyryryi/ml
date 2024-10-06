@@ -1,4 +1,4 @@
-from lightorch.nn.criterions import LighTorchLoss, ELBO, BinaryCrossEntropy, Loss, MSE
+from lightorch.nn.criterions import LighTorchLoss, ELBO, Loss, MSELoss
 import torch.nn.functional as f
 from torch import Tensor
 import torch
@@ -50,8 +50,7 @@ class SeismicVelocityLoss(LighTorchLoss):
         return self.pil(t, v)
 
 def criterion(beta: float, *args) -> LighTorchLoss:
-    return Loss(
-        ELBO(beta, MSE(args[0])),
-        SeismicVelocityLoss(omega=2*torch.pi, damping=0.1, factor=args[2]),
-        BinaryCrossEntropy(args[2])
-    )
+    elbo = ELBO(beta, MSELoss(args[0]))
+    physics = SeismicVelocityLoss(omega=2*torch.pi, damping=0.1, factor=args[1])
+    binary = BinaryCrossEntropy(args[2])
+    return Loss(elbo,physics,binary)
