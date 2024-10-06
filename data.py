@@ -5,8 +5,11 @@ from typing import Dict, List, Generator, Tuple
 from scipy.signal import butter, filtfilt
 from torch.utils.data import Dataset
 from datetime import timedelta
+import torch.nn.functional as F
+from scipy.signal import stft
 from torch import Tensor
 import pandas as pd
+import numpy as np
 import torch
 import os
 
@@ -60,6 +63,18 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
     y = filtfilt(b, a, data)
     return y
 
+def filter_p_s_waves(velocity: np.ndarray,
+                     sampling_rate: int = 512,
+                     nperseg: int = 60) -> torch.Tensor:
+    frequencies, _, Zxx = stft(velocity, fs=sampling_rate, nperseg=nperseg)
+    magnitude = torch.tensor(np.abs(Zxx), dtype=torch.float32)
+    p_wave_range = (0.5, 15.0)
+    s_wave_range = (0.1, 8.0)
+    frequency_mask = ((frequencies >= p_wave_range[0]) & (frequencies <= p_wave_range[1])) | \
+                      ((frequencies >= s_wave_range[0]) & (frequencies <= s_wave_range[1]))
+    filtered_magnitude = magnitude[frequency_mask]
+    out = F.interpolate(filtered_magnitude.unsqueeze(0), size=(len(velocity),), mode='linear', align_corners=True)
+    return out.squeeze(0, 1)
 
 class Base(Dataset):
     def __init__(self, sequence_length: int, resample: timedelta, train: bool) -> None:
@@ -122,8 +137,7 @@ class TrainDataset(Base):
         acceleration: Tensor = (velocities[:-1] - velocities[1:]) / (times[:-1] - times[1:])
         max_velocities: Tensor = torch.from_numpy(df["norm_v"].resample(self.resample).max().values)
         butterworth_bandpass: Tensor = torch.from_numpy(butter_bandpass(max_velocities, 0.1, 0.5, fs = 60))
-        wavelet_transform: Tensor = ...
-        sliding_fourier: Tensor = ...
+        sliding_fourier: Tensor = get_fourier(velocities, self.sequence_length)
 
         out: Tensor = torch.stack(
             [
@@ -131,7 +145,6 @@ class TrainDataset(Base):
                 acceleration,
                 max_velocities,
                 butterworth_bandpass,
-                wavelet_transform,
                 sliding_fourier,
             ], dim = -1
         )
@@ -154,8 +167,8 @@ class TestDataset(Base):
         acceleration: Tensor = (velocities[:-1] - velocities[1:]) / (times[:-1] - times[1:])
         max_velocities: Tensor = torch.from_numpy(df["norm_v"].resample(self.resample).max().values)
         butterworth_bandpass: Tensor = torch.from_numpy(butter_bandpass(max_velocities, 0.1, 0.5, fs = 60))
-        wavelet_transform: Tensor = ... ### default
-        sliding_fourier: Tensor = ... ### trans conv
+
+        sliding_fourier: Tensor = get_fourier(velocities, self.sequence_length)
 
         out: Tensor = torch.stack(
             [
@@ -163,7 +176,6 @@ class TestDataset(Base):
                 acceleration,
                 max_velocities,
                 butterworth_bandpass,
-                wavelet_transform,
                 sliding_fourier,
             ], dim = -1
         )
@@ -171,8 +183,6 @@ class TestDataset(Base):
         return [
             self.zero_padding(input) for input in zip(out.split(self.sequence_length))
         ]
-
-
 
 class DataModule(LightningDataModule):
     def __init__(self, batch_size: int, num_workers: int, pin_memory: bool) -> None:

@@ -1,7 +1,7 @@
 trainer:
   logger: true
   enable_checkpointing: true
-  max_epochs: 250
+  max_epochs: 50
   accelerator: cuda
   devices:  1
   precision: 32
@@ -9,7 +9,17 @@ trainer:
 model:
   class_path: cnn1d.model.Model
   dict_kwargs:
-    # TODO
+    input_channels: 6
+    encoder_channels: [32, 64, 128]
+    reconstructor_channels: [128, 64, 32]
+    kernel_sizes: [3, 3, 3]
+    strides: [2, 2, 2]
+    paddings: [1, 1, 1]
+    dropout: 0.1
+    activation: 'Tanh'
+    latent_dim: 20
+    beta: 1.0
+    lambdas: [1.0, 0.1]
 
 data:
   class_path: data.DataModule
