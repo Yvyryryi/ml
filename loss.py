@@ -1,4 +1,5 @@
 from lightorch.nn.criterions import LighTorchLoss, ELBO, BinaryCrossEntropy, Loss, MSE
+import torch.nn.functional as f
 from torch import Tensor
 import torch
 
@@ -9,9 +10,17 @@ class TV(LighTorchLoss):
             factors={self.__class__.__name__: factor},
         )
 
-    def forward(self, kwargs) -> Tensor:
+    def forward(self, **kwargs) -> Tensor:
         return torch.norm(kwargs['input'][:, :-1] - kwargs['input'][:, 1:], p=1).sum()
 
+class BinaryCrossEntropy(LighTorchLoss):
+    def __init__(self, factor: float = 1) -> None:
+        super().__init__(
+            labels=self.__class__.__name__,
+            factors={self.__class__.__name__: factor},
+        )
+    def forward(self, **kwargs) -> Tensor:
+        return f.binary_cross_entropy(kwargs['input'], kwargs['target'])
 
 class PhysicsInformedLoss(LighTorchLoss):
     def __init__(self, c: float, g: float, factor: float = 1) -> None:
@@ -46,9 +55,9 @@ class PhysicsInformedLoss(LighTorchLoss):
         pde_residual = u_tt_val - (self.c ** 2 * u_zz_val + self.g * u_z_val)
         return torch.mean(pde_residual ** 2)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, **kwargs) -> Tensor:
         z: Tensor = ...
-        return self.pil(x, z)
+        return self.pil(kwargs['input'], z)
 
 
 def criterion(beta: float, *args) -> LighTorchLoss:

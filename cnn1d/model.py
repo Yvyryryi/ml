@@ -58,9 +58,7 @@ class SignalProcessing1DCNN(nn.Sequential):
 class Model(Module):
     def __init__(self, **hparams) -> None:
         super().__init__(**hparams)
-        self.model = SignalProcessing1DCNN(
-
-        )
+        self.model = SignalProcessing1DCNN()
         self.criterion = criterion(hparams['beta'], *hparams['lambdas'])
 
     def forward(self, x: Tensor) -> Tensor:
