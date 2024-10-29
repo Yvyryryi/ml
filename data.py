@@ -15,14 +15,14 @@ import os
 
 metadata: Dict[str, Dict[str,str]] = dict(
     lunar = dict(
-        catalog = '../data/lunar/training/catalogs/apollo12_catalog_GradeA_final.csv',
-        train_path = '../data/mars/training/data',
-        test_path = '../data/mars/test/data',
+        catalog = '/data/SpaceApps/lunar/training/catalogs/apollo12_catalog_GradeA_final.csv',
+        train_path = '/data/SpaceApps/mars/training/data',
+        test_path = '/data/SpaceApps/mars/test/data',
     ),
     mars = dict(
-        catalog = '../data/mars/training/catalogs/Mars_InSight_training_catalog_final.csv',
-        train_path = '../data/lunar/training/data/S12_GradeA',
-        test_path = '../data/lunar/test/data'
+        catalog = '/data/SpaceApps/mars/training/catalogs/Mars_InSight_training_catalog_final.csv',
+        train_path = '/data/SpaceApps/lunar/training/data/S12_GradeA',
+        test_path = '/data/SpaceApps/lunar/test/data'
     )
 )
 
@@ -76,11 +76,11 @@ class Base(Dataset):
         self.sequence_length = sequence_length
         self.resample = pd.Timedelta(resample)
         if train:
-            self.filepaths = [filename for filename in recursive_search('../data/mars/training/data')] + \
-                            [filename for filename in recursive_search('../data/lunar/training/data')]
+            self.filepaths = [filename for filename in recursive_search('/data/SpaceApps/mars/training/data')] + \
+                            [filename for filename in recursive_search('/data/SpaceApps/lunar/training/data')]
         else:
-            self.filepaths = [filename for filename in recursive_search('../data/mars/test/data')] + \
-                            [filename for filename in recursive_search('../data/lunar/test/data')]
+            self.filepaths = [filename for filename in recursive_search('/data/SpaceApps/mars/test/data')] + \
+                            [filename for filename in recursive_search('/data/SpaceApps/lunar/test/data')]
 
         self.meta_lunar: pd.DataFrame = pd.read_csv(metadata['lunar']['catalog'], index_col = ['filename'])
         self.meta_mars: pd.DataFrame = pd.read_csv(metadata['mars']['catalog'], index_col = ['filename'])
@@ -93,19 +93,24 @@ class Base(Dataset):
         self.preprocessing()
 
     def zero_padding(self, x: Tensor) -> Tensor:
-        pad_size = self.sequence_length - x.size(-1)
+        pad_size = self.sequence_length - x.size(0)
         if pad_size > 0:
-            return torch.nn.functional.pad(x, (0, pad_size))
+            if len(x.size()) == 1:
+                return torch.nn.functional.pad(x, (0, pad_size))
+            elif len(x.size()) == 2:
+                return torch.nn.functional.pad(x, (0, 0, 0, pad_size))
+            else:
+                raise ValueError("unreach")
         return x
 
     def one_padding(self, x: Tensor) -> Tensor:
-        pad_size = self.sequence_length - x.size(-1)
+        pad_size = self.sequence_length - x.size(0)
         if pad_size > 0:
             return torch.nn.functional.pad(x, (0, pad_size), "constant", 1)
         return x
 
     def preprocessing(self) -> None:
-        self.data: List[Tuple[Tensor, Tensor]] = []
+        self.data: List[Tuple[Tensor, Tensor, Tensor]] = []
         for file in self.filepaths:
             try:
                 out: Tensor = self.get_data(file)
@@ -116,7 +121,7 @@ class Base(Dataset):
     def __len__(self) -> int:
         return len(self.metadata)
 
-    def __getitem__(self, idx: int) -> Tuple[Tensor, Tensor]:
+    def __getitem__(self, idx: int) -> Tuple[Tensor, Tensor, Tensor]:
         return self.data[idx]
 
 class TrainDataset(Base):
@@ -154,10 +159,10 @@ class TrainDataset(Base):
                 butterworth_bandpass,
                 sliding_fourier,
             ], dim = -1
-        )
+        ).to(torch.float32)
 
         return [
-            (self.one_padding(time), self.zero_padding(input), self.zero_padding(output)) \
+            (self.one_padding(time).to(torch.float32), self.zero_padding(input).transpose(-2, -1), self.zero_padding(output).to(torch.float32)) \
             for input, output, time in zip(out.split(self.sequence_length), target.split(self.sequence_length), times.split(self.sequence_length))
         ]
 
@@ -188,7 +193,7 @@ class TestDataset(Base):
         )
 
         return [
-            (self.one_padding(time), self.zero_padding(input)) for input, time in zip(out.split(self.sequence_length), times.split(self.sequence_length))
+            (self.one_padding(time), self.zero_padding(input)).transpose(-1, -2) for input, time in zip(out.split(self.sequence_length), times.split(self.sequence_length))
         ]
 
 class DataModule(LightningDataModule):

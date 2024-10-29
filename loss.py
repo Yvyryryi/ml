@@ -53,4 +53,8 @@ def criterion(beta: float, *args) -> LighTorchLoss:
     elbo = ELBO(beta, MSELoss(args[0]))
     physics = SeismicVelocityLoss(omega=2*torch.pi, damping=0.1, factor=args[1])
     binary = BinaryCrossEntropy(args[2])
-    return Loss(elbo,physics,binary)
+    return Loss(
+        elbo,
+        # physics,
+        binary
+    )

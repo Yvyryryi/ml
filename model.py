@@ -54,12 +54,11 @@ class Encoder(nn.Module):
               for in_channel, out_channel, kernel_size, stride, padding in
               zip([input_channels] + list(channels[:-1]), channels, kernel_sizes, strides, paddings)]
         )
-        self.fc_mu = nn.Linear(channels[-1], latent_dim)
-        self.fc_logvar = nn.Linear(channels[-1], latent_dim)
+        self.fc_mu = nn.Linear(200, latent_dim)
+        self.fc_logvar = nn.Linear(200, latent_dim)
 
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         x = self.conv_layers(x)
-        x = x.view(x.size(0), -1)
         mu = self.fc_mu(x)
         logvar = self.fc_logvar(x)
         return mu, logvar
@@ -77,7 +76,7 @@ class Decoder(nn.Module):
         output_channels: int
     ) -> None:
         super().__init__()
-        self.fc = nn.Linear(latent_dim, channels[0])
+        self.fc = nn.Linear(latent_dim, 200)
         self.conv_layers = nn.Sequential(
             *[trans_conv_block(in_channel, out_channel, kernel_size, stride, padding, activation, dropout)
               for in_channel, out_channel, kernel_size, stride, padding in
@@ -87,10 +86,9 @@ class Decoder(nn.Module):
 
     def forward(self, z: Tensor) -> Tensor:
         x = self.fc(z)
-        x = x.unsqueeze(2)  # Add a dummy dimension for 1D convolution
         x = self.conv_layers(x)
         x = self.final_conv(x)
-        return x
+        return x.squeeze(1)
 
 class VAE(nn.Module):
     def __init__(
@@ -113,13 +111,13 @@ class VAE(nn.Module):
         self.binary_classifier = nn.Sequential(
             nn.Linear(latent_dim, latent_dim * 2),
             nn.ReLU(),
-            nn.Linear(latent_dim * 2, sequence_length), ## secuence length
+            nn.Linear(latent_dim * 2, sequence_length), ## solve this for channels and sequencelength output
             nn.Sigmoid()
         )
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
         std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
+        eps = torch.randn_like(std, device = 'cuda')
         return mu + eps * std
 
     def binary(self, z: Tensor) -> Tensor:
@@ -149,14 +147,13 @@ class Model(Module):
 
     def loss_forward(self, batch: Tensor, idx: int):
         times, input, binary_target = batch
-        reconstruction, binary_pred, mu, logvar = self(batch[0])
-        binary_target = batch[1]
+        reconstruction, binary_pred, mu, logvar = self(input)
         return dict(
             input=reconstruction,
-            target=input,
+            target=input[:, 0, :],
             logvar=logvar,
             mu=mu,
-            velocity=reconstruction[:, :, 0],
+            velocity=reconstruction,
             time=times,
             binary_pred=binary_pred,
             binary_target=binary_target,
