@@ -90,6 +90,13 @@ class Decoder(nn.Module):
         x = self.final_conv(x)
         return x.squeeze(1)
 
+class BinaryClassifier(nn.LSTM):
+    def __init__(self, input_size: int, layers: int, dropout: float) -> None:
+        super().__init__(input_size = input_size, hidden_size = 1, num_layers = layers, dropout = dropout, batch_first = True)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return super().forward(x.transpose(-2, -1))[0].squeeze(-1)
+
 class VAE(nn.Module):
     def __init__(
         self,
@@ -100,33 +107,24 @@ class VAE(nn.Module):
         strides: Sequence[int],
         paddings: Sequence[int],
         dropout: float,
-        latent_dim: int
+        latent_dim: int,
+        layers: int,
     ) -> None:
         super().__init__()
         self.encoder = Encoder(input_channels, encoder_channels, kernel_sizes, strides, paddings, dropout, nn.Tanh, latent_dim)
         self.decoder = Decoder(latent_dim, decoder_channels, kernel_sizes[::-1], strides[::-1], paddings[::-1], dropout, nn.Tanh, 1)
 
-        sequence_length: int = 200
-
-        self.binary_classifier = nn.Sequential(
-            nn.Linear(latent_dim, latent_dim * 2),
-            nn.ReLU(),
-            nn.Linear(latent_dim * 2, sequence_length), ## solve this for channels and sequencelength output
-            nn.Sigmoid()
-        )
+        self.binary_classifier = BinaryClassifier(input_channels, layers, dropout)
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std, device = 'cuda')
-        return mu + eps * std
-
-    def binary(self, z: Tensor) -> Tensor:
-        return self.binary_classifier(z)
+        var = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(var, device = 'cuda')
+        return mu + eps * var
 
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         mu, logvar = self.encoder(x)
         z = self.reparameterize(mu, logvar)
-        binary_pred = self.binary(z)
+        binary_pred = self.binary_classifier(x)
         recon_x = self.decoder(z)
         return recon_x, binary_pred, mu, logvar
 
@@ -141,20 +139,19 @@ class Model(Module):
             strides=hparams['strides'],
             paddings=hparams['paddings'],
             dropout=hparams['dropout'],
-            latent_dim=hparams['latent_dim']
+            latent_dim=hparams['latent_dim'],
+            layers=hparams['layers'],
         )
         self.criterion = criterion(hparams['beta'], *hparams['lambdas'])
 
     def loss_forward(self, batch: Tensor, idx: int):
-        times, input, binary_target = batch
+        _, input, binary_target = batch
         reconstruction, binary_pred, mu, logvar = self(input)
         return dict(
             input=reconstruction,
             target=input[:, 0, :],
             logvar=logvar,
             mu=mu,
-            velocity=reconstruction,
-            time=times,
             binary_pred=binary_pred,
             binary_target=binary_target,
         )

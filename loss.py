@@ -1,5 +1,5 @@
-from lightorch.nn.criterions import LighTorchLoss, ELBO, Loss, MSELoss
-import torch.nn.functional as f
+from lightorch.nn.criterions import LighTorchLoss, ELBO, Loss, MSELoss, BinaryCrossEntropy
+from typing import Tuple, Optional
 from torch import Tensor
 import torch
 
@@ -10,17 +10,9 @@ class TV(LighTorchLoss):
             factors={self.__class__.__name__: factor},
         )
 
-    def forward(self, **kwargs) -> Tensor:
-        return torch.norm(kwargs['reconstruction'][:, :-1] - kwargs['reconstruction'][:, 1:], p=1).sum()
-
-class BinaryCrossEntropy(LighTorchLoss):
-    def __init__(self, factor: float = 1) -> None:
-        super().__init__(
-            labels=self.__class__.__name__,
-            factors={self.__class__.__name__: factor},
-        )
-    def forward(self, **kwargs) -> Tensor:
-        return f.binary_cross_entropy(kwargs['binary_pred'], kwargs['binary_target'])
+    def forward(self, **kwargs) -> Tuple[Tensor, Tensor]:
+        out = torch.norm(kwargs['input'][:, :-1] - kwargs['input'][:, 1:], p=1).sum()
+        return out, out * self.factors[self.__class__.__name__]
 
 class SeismicVelocityLoss(LighTorchLoss):
     def __init__(self, omega: float, damping: float, factor: float = 1) -> None:
@@ -49,12 +41,18 @@ class SeismicVelocityLoss(LighTorchLoss):
         v: Tensor = kwargs['velocity']
         return self.pil(t, v)
 
+class BinaryLoss(BinaryCrossEntropy):
+    def __init__(self, weight: Optional[Tensor] = None, size_average=None, reduce=None, reduction: str = "mean", factor: float = 1) -> None:
+        super().__init__(weight, size_average, reduce, reduction, factor)
+    def forward(self, **kwargs) -> Tuple[Tensor, Tensor]:
+        return super().forward(
+            input = kwargs['binary_pred'],
+            target = kwargs['binary_target'],
+        )
+
+
 def criterion(beta: float, *args) -> LighTorchLoss:
-    elbo = ELBO(beta, MSELoss(args[0]))
-    physics = SeismicVelocityLoss(omega=2*torch.pi, damping=0.1, factor=args[1])
-    binary = BinaryCrossEntropy(args[2])
-    return Loss(
-        elbo,
-        # physics,
-        binary
-    )
+    elbo = ELBO(beta, MSELoss(factor = args[0]))
+    tv = TV(args[1])
+    binary = BinaryLoss(factor = args[2])
+    return Loss(elbo, tv, binary)
